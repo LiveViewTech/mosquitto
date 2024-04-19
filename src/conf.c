@@ -1292,7 +1292,7 @@ static int config__read_file_core(struct mosquitto__config *config, bool reload,
 						cur_bridge->primary_retry_sock = INVALID_SOCKET;
 						cur_bridge->outgoing_retain = true;
 						cur_bridge->clean_start_local = -1;
-                        cur_bridge->session_expiry = 1209600;
+						cur_bridge->session_expiry = 1209600;
 					}else{
 						log__printf(NULL, MOSQ_LOG_ERR, "Error: Empty connection value in configuration.");
 						return MOSQ_ERR_INVAL;

@@ -348,6 +348,11 @@ int bridge__connect(struct mosquitto *context)
 	uint8_t notification_payload;
 	uint8_t qos;
 
+    //mosquitto_property receive_maximum
+    mosquitto_property session_expiry_interval;
+    // mosquitto_property topic_alias_max
+    mosquitto_property *properties = NULL;
+
 	if(!context || !context->bridge) return MOSQ_ERR_INVAL;
 
 	mosquitto__set_state(context, mosq_cs_new);
@@ -360,6 +365,7 @@ int bridge__connect(struct mosquitto *context)
 	context->ping_t = 0;
 	context->bridge->lazy_reconnect = false;
 	context->maximum_packet_size = context->bridge->maximum_packet_size;
+    context->session_expiry_interval = context->bridge->session_expiry;
 	bridge__packet_cleanup(context);
 	db__message_reconnect_reset(context);
 
@@ -461,7 +467,14 @@ int bridge__connect(struct mosquitto *context)
 
 	HASH_ADD(hh_sock, db.contexts_by_sock, sock, sizeof(context->sock), context);
 
-	rc2 = send__connect(context, context->keepalive, context->clean_start, NULL);
+    // Set session expiry interval for bridge
+    session_expiry_interval.value.i32 = context->session_expiry_interval;
+    session_expiry_interval.identifier = MQTT_PROP_SESSION_EXPIRY_INTERVAL;
+    session_expiry_interval.client_generated = false;
+    session_expiry_interval.next = properties;
+    properties = &session_expiry_interval;
+
+    rc2 = send__connect(context, context->keepalive, context->clean_start, properties);
 	if(rc2 == MOSQ_ERR_SUCCESS){
 		return rc;
 	}else if(rc2 == MOSQ_ERR_ERRNO && errno == ENOTCONN){

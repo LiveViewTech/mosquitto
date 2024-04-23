@@ -348,9 +348,7 @@ int bridge__connect(struct mosquitto *context)
 	uint8_t notification_payload;
 	uint8_t qos;
 
-    //mosquitto_property receive_maximum
     mosquitto_property session_expiry_interval;
-    // mosquitto_property topic_alias_max
     mosquitto_property *properties = NULL;
 
 	if(!context || !context->bridge) return MOSQ_ERR_INVAL;

@@ -2202,7 +2202,6 @@ static int config__read_file_core(struct mosquitto__config *config, bool reload,
 #endif
 				}else{
 					log__printf(NULL, MOSQ_LOG_ERR, "Error: Unknown configuration variable \"%s\".", token);
-                    log__printf(NULL, MOSQ_LOG_ERR, "Error: hasdfgasdfasfasdfasdfasdf \"%s\".", token);
 					return MOSQ_ERR_INVAL;
 				}
 			}

@@ -146,7 +146,8 @@ int bridge__new(struct mosquitto__bridge *bridge)
 	return bridge__connect(new_context);
 #endif
 }
-
+#define __GLIBC__ 1;
+#define WITH_ADNS 1;
 #if defined(__GLIBC__) && defined(WITH_ADNS)
 int bridge__connect_step1(struct mosquitto *context)
 {
@@ -169,6 +170,7 @@ int bridge__connect_step1(struct mosquitto *context)
 	context->ping_t = 0;
 	context->bridge->lazy_reconnect = false;
 	context->maximum_packet_size = context->bridge->maximum_packet_size;
+	context->session_expiry_interval = context->bridge->session_expiry;
 	bridge__packet_cleanup(context);
 	db__message_reconnect_reset(context);
 
@@ -299,6 +301,8 @@ int bridge__connect_step2(struct mosquitto *context)
 int bridge__connect_step3(struct mosquitto *context)
 {
 	int rc;
+	mosquitto_property session_expiry_interval;
+	mosquitto_property *properties = NULL;
 
 	rc = net__socket_connect_step3(context, context->bridge->addresses[context->bridge->cur_address].address);
 	if(rc > 0){
@@ -319,7 +323,14 @@ int bridge__connect_step3(struct mosquitto *context)
 		context->bridge->primary_retry = db.now_s + 5;
 	}
 
-	rc = send__connect(context, context->keepalive, context->clean_start, NULL);
+	// Set session expiry interval for bridge
+	session_expiry_interval.value.i32 = context->session_expiry_interval;
+	session_expiry_interval.identifier = MQTT_PROP_SESSION_EXPIRY_INTERVAL;
+	session_expiry_interval.client_generated = false;
+	session_expiry_interval.next = properties;
+	properties = &session_expiry_interval;
+
+	rc = send__connect(context, context->keepalive, context->clean_start, properties);
 	if(rc == MOSQ_ERR_SUCCESS){
 		return MOSQ_ERR_SUCCESS;
 	}else if(rc == MOSQ_ERR_ERRNO && errno == ENOTCONN){

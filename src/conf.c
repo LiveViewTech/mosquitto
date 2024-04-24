@@ -956,7 +956,6 @@ static int config__read_file_core(struct mosquitto__config *config, bool reload,
                     if(conf__parse_int(&token, "session_expiry", &tmp_int, saveptr)) return MOSQ_ERR_INVAL;
                     if(tmp_int < 0) tmp_int = 0;
                     cur_bridge->session_expiry = (uint32_t)tmp_int;
-					log__printf(NULL, MOSQ_LOG_INFO, "Session Expiry: %d", cur_bridge->session_expiry);
 #else
                     log__printf(NULL, MOSQ_LOG_WARNING, "Warning: Bridge support not available.");
 #endif

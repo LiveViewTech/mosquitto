@@ -374,7 +374,6 @@ int bridge__connect(struct mosquitto *context)
 	context->bridge->lazy_reconnect = false;
 	context->maximum_packet_size = context->bridge->maximum_packet_size;
     context->session_expiry_interval = context->bridge->session_expiry;
-	log__printf(NULL, MOSQ_LOG_INFO, "Bridge Session expiry: %d", context->bridge->session_expiry);
 	bridge__packet_cleanup(context);
 	db__message_reconnect_reset(context);
 

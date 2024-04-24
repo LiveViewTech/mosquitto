@@ -146,8 +146,7 @@ int bridge__new(struct mosquitto__bridge *bridge)
 	return bridge__connect(new_context);
 #endif
 }
-#define __GLIBC__ 1;
-#define WITH_ADNS 1;
+
 #if defined(__GLIBC__) && defined(WITH_ADNS)
 int bridge__connect_step1(struct mosquitto *context)
 {

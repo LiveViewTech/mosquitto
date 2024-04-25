@@ -389,6 +389,26 @@ void db__message_dequeue_first(struct mosquitto *context, struct mosquitto_msg_d
 	db__msg_add_to_inflight_stats(msg_data, msg);
 }
 
+// Detatch node from msg_data's inflight list and return it to the front of the queue.
+// Note: msg_data metrics must already be disregarding the messages that are to be re-queued (i.e. called from a
+// function like db__message_reconnect_reset_outgoing)
+void db__messages_requeue_from_node(struct mosquitto_msg_data *msg_data, struct mosquitto_client_msg *nodeToDetach)
+{
+    // detach node from msg_data
+    // get tail node from inflight DL
+    struct mosquitto_client_msg *nodeTail = msg_data->inflight->prev;
+    // set new tail for inflight DL
+    nodeToDetach->prev->next = NULL;
+    // complete half-circle for inflight DL
+    msg_data->inflight->prev = nodeToDetach->prev;
+    // complete half-circle for now detached DL
+    nodeToDetach->prev = nodeTail;
+
+    // prepend detached list to queue
+    DL_CONCAT(nodeToDetach, msg_data->queued);
+    // set new head for queue
+    msg_data->queued = nodeToDetach;
+}
 
 int db__message_delete_outgoing(struct mosquitto *context, uint16_t mid, enum mosquitto_msg_state expect_state, int qos)
 {
@@ -426,8 +446,12 @@ int db__message_delete_outgoing(struct mosquitto *context, uint16_t mid, enum mo
 				tail->state = mosq_ms_publish_qos1;
 				break;
 			case 2:
-				tail->state = mosq_ms_publish_qos2;
-				break;
+                if(tail->state == mosq_ms_wait_for_pubcomp){
+                    tail->state = mosq_ms_resend_pubrel;
+                }else{
+                    tail->state = mosq_ms_publish_qos2;
+                }
+                break;
 		}
 		db__message_dequeue_first(context, &context->msgs_out);
 	}
@@ -840,10 +864,16 @@ static int db__message_reconnect_reset_outgoing(struct mosquitto *context)
 	context->msgs_out.inflight_quota = context->msgs_out.inflight_maximum;
 
 	DL_FOREACH_SAFE(context->msgs_out.inflight, msg, tmp){
-		db__msg_add_to_inflight_stats(&context->msgs_out, msg);
+        if(context->msgs_out.inflight_quota == 0){
+            db__messages_requeue_from_node(&context->msgs_out, msg);
+            break;
+        }
+
+        db__msg_add_to_inflight_stats(&context->msgs_out, msg);
 		if(msg->qos > 0){
 			util__decrement_send_quota(context);
 		}
+
 
 		switch(msg->qos){
 			case 0:
@@ -867,6 +897,7 @@ static int db__message_reconnect_reset_outgoing(struct mosquitto *context)
 	 * get sent until the client next receives a message - and they
 	 * will be sent out of order.
 	 */
+
 	DL_FOREACH_SAFE(context->msgs_out.queued, msg, tmp){
 		db__msg_add_to_queued_stats(&context->msgs_out, msg);
 		if(db__ready_for_flight(context, mosq_md_out, msg->qos)){
@@ -877,9 +908,13 @@ static int db__message_reconnect_reset_outgoing(struct mosquitto *context)
 				case 1:
 					msg->state = mosq_ms_publish_qos1;
 					break;
-				case 2:
-					msg->state = mosq_ms_publish_qos2;
-					break;
+                case 2:
+                    if(msg->state == mosq_ms_wait_for_pubcomp){
+                        msg->state = mosq_ms_resend_pubrel;
+                    }else{
+                        msg->state = mosq_ms_publish_qos2;
+                    }
+                    break;
 			}
 			db__message_dequeue_first(context, &context->msgs_out);
 		}
@@ -939,8 +974,12 @@ static int db__message_reconnect_reset_incoming(struct mosquitto *context)
 					msg->state = mosq_ms_publish_qos1;
 					break;
 				case 2:
-					msg->state = mosq_ms_publish_qos2;
-					break;
+                    if(msg->state == mosq_ms_wait_for_pubcomp){
+                        msg->state = mosq_ms_resend_pubrel;
+                    }else{
+                        msg->state = mosq_ms_publish_qos2;
+                    }
+                    break;
 			}
 			db__message_dequeue_first(context, &context->msgs_in);
 		}
@@ -1282,9 +1321,13 @@ int db__message_write_queued_out(struct mosquitto *context)
 			case 1:
 				tail->state = mosq_ms_publish_qos1;
 				break;
-			case 2:
-				tail->state = mosq_ms_publish_qos2;
-				break;
+            case 2:
+                if(tail->state == mosq_ms_wait_for_pubcomp){
+                    tail->state = mosq_ms_resend_pubrel;
+                }else{
+                    tail->state = mosq_ms_publish_qos2;
+                }
+                break;
 		}
 		db__message_dequeue_first(context, &context->msgs_out);
 	}

@@ -334,6 +334,7 @@ int net__try_connect_step2(struct mosquitto *mosq, uint16_t port, mosq_sock_t *s
 
 	for(rp = ainfo; rp != NULL; rp = rp->ai_next){
 		*sock = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
+    log__printf(mosq, MOSQ_LOG_NOTICE, "rkdb: try_connect_step2 after socket() returned %d", *sock);
 		if(*sock == INVALID_SOCKET) continue;
 
 		if(rp->ai_family == AF_INET){
@@ -341,6 +342,7 @@ int net__try_connect_step2(struct mosquitto *mosq, uint16_t port, mosq_sock_t *s
 		}else if(rp->ai_family == AF_INET6){
 			((struct sockaddr_in6 *)rp->ai_addr)->sin6_port = htons(port);
 		}else{
+      log__printf(mosq, MOSQ_LOG_NOTICE, "rkdb: try_connect_step2 closing sock %d", *sock);
 			COMPAT_CLOSE(*sock);
 			*sock = INVALID_SOCKET;
 			continue;
@@ -367,6 +369,7 @@ int net__try_connect_step2(struct mosquitto *mosq, uint16_t port, mosq_sock_t *s
 			break;
 		}
 
+    log__printf(mosq, MOSQ_LOG_NOTICE, "rkdb: try_connect_step2 closing sock %d (loc 2)", *sock);
 		COMPAT_CLOSE(*sock);
 		*sock = INVALID_SOCKET;
 	}

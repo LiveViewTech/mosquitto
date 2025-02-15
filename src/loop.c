@@ -299,6 +299,7 @@ void do_disconnect(struct mosquitto *context, int reason)
 		if(context->sock != INVALID_SOCKET){
 			HASH_DELETE(hh_sock, db.contexts_by_sock, context);
 			mux__delete(context);
+      log__printf(NULL, MOSQ_LOG_NOTICE, "rkdb: do_disconnect in wsi setting %s sock to INVALID_SOCK", context->id);
 			context->sock = INVALID_SOCKET;
 		}
 		if(is_duplicate){

@@ -191,9 +191,15 @@ static int persist__client_chunk_restore(FILE *db_fptr)
 	}
 
 	context = persist__find_or_add_context(chunk.client_id, chunk.F.last_mid);
+  log__printf(NULL, MOSQ_LOG_NOTICE, "rkdb: client_chunk_restore client %s: bridge = %s", chunk.client_id, context->id);
 	if(context){
-		context->session_expiry_time = chunk.F.session_expiry_time;
-		context->session_expiry_interval = chunk.F.session_expiry_interval;
+    if (!context->is_bridge && context->bridge == NULL) {
+      context->session_expiry_time = chunk.F.session_expiry_time;
+		  context->session_expiry_interval = chunk.F.session_expiry_interval;
+    } else {
+      log__printf(NULL, MOSQ_LOG_NOTICE, "rkdb: zeroing out expiry time on %s.", context->bridge->name);
+      context->session_expiry_time = 0;
+    }
 		if(chunk.username && !context->username){
 			/* username is not freed here, it is now owned by context */
 			context->username = chunk.username;

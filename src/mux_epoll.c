@@ -294,6 +294,7 @@ static void loop_handle_reads_writes(struct mosquitto *context, uint32_t events)
 		do{
 			rc = packet__read(context);
 			if(rc){
+				log__printf(NULL, MOSQ_LOG_NOTICE, "rkdb: [1;31mpacket__read failed for %s - rc = %d: sock is now %d[0m", context->id, rc, context->sock);
 				do_disconnect(context, rc);
 				return;
 			}

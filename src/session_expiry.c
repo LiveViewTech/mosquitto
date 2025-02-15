@@ -154,7 +154,7 @@ void session_expiry__check(void)
   last_check = db.now_real_s;
 
   DL_FOREACH_SAFE(expiry_list, item, tmp){
-    if (item->context->bridge == NULL) {
+    if (item->context->bridge == NULL && strstr(item->context->id, "local.") == NULL) {
       if(item->context->session_expiry_time < db.now_real_s){
 
         context = item->context;

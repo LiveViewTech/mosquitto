@@ -62,6 +62,8 @@ void bridge__start_all(void)
 	int i;
 
 	for(i=0; i<db.config->bridge_count; i++){
+    log__printf(NULL, MOSQ_LOG_NOTICE, "rkdb: setting session_expiry to 0 for %s.", db.config->bridges[i].name);
+    db.config->bridges[i].session_expiry = 0;
 		if(bridge__new(&(db.config->bridges[i])) > 0){
 			log__printf(NULL, MOSQ_LOG_WARNING, "Warning: Unable to connect to bridge %s.",
 					db.config->bridges[i].name);
@@ -159,7 +161,10 @@ int bridge__connect_step1(struct mosquitto *context)
 
 	if(!context || !context->bridge) return MOSQ_ERR_INVAL;
 
+  context->session_expiry_time = 0;
+
 	mosquitto__set_state(context, mosq_cs_new);
+  log__printf(NULL, MOSQ_LOG_ERR, "rkdb: setting INVALID_SOCKET in step 1");
 	context->sock = INVALID_SOCKET;
 	context->last_msg_in = db.now_s;
 	context->next_msg_out = db.now_s + context->bridge->keepalive;
@@ -245,7 +250,9 @@ int bridge__connect_step1(struct mosquitto *context)
 		}
 	}
 
-	log__printf(NULL, MOSQ_LOG_NOTICE, "rkdb: Connecting bridge (step 1) %s (%s:%d)", context->bridge->name, context->bridge->addresses[context->bridge->cur_address].address, context->bridge->addresses[context->bridge->cur_address].port);
+	log__printf(NULL, MOSQ_LOG_NOTICE, "rkdb: Connecting bridge (step 1) %s (%s:%d): expiry=%ld bridge_expiry=%u",
+              context->bridge->name, context->bridge->addresses[context->bridge->cur_address].address, context->bridge->addresses[context->bridge->cur_address].port,
+              context->session_expiry_time, context->bridge->session_expiry);
 	rc = net__try_connect_step1(context, context->bridge->addresses[context->bridge->cur_address].address);
 	if(rc > 0 ){
 		if(rc == MOSQ_ERR_TLS){
@@ -269,6 +276,7 @@ int bridge__connect_step1(struct mosquitto *context)
 int bridge__connect_step2(struct mosquitto *context)
 {
 	int rc;
+  char buf[20];
 
 	if(!context || !context->bridge) return MOSQ_ERR_INVAL;
 
@@ -292,7 +300,11 @@ int bridge__connect_step2(struct mosquitto *context)
 	HASH_ADD(hh_sock, db.contexts_by_sock, sock, sizeof(context->sock), context);
 
 	if(rc == MOSQ_ERR_CONN_PENDING){
+    log__printf(NULL, MOSQ_LOG_ERR, "rkdb: after try_connect_step2 rc=MOSQ_ERR_CONN_PENDING context->sock=%d", context->sock);
 		mosquitto__set_state(context, mosq_cs_connect_pending);
+		context->keepalive = 60;
+		context->last_msg_in = db.now_s;
+		context->next_msg_out = db.now_s + 60;
 		mux__add_out(context);
 	}
 	return rc;
@@ -336,6 +348,7 @@ int bridge__connect_step3(struct mosquitto *context)
 
 	rc = send__connect(context, context->keepalive, context->clean_start, properties);
 	if(rc == MOSQ_ERR_SUCCESS){
+    log__printf(NULL, MOSQ_LOG_ERR, "rkdb: [1;32mbridge_connect_step3 success[0m");
 		return MOSQ_ERR_SUCCESS;
 	}else if(rc == MOSQ_ERR_ERRNO && errno == ENOTCONN){
     log__printf(NULL, MOSQ_LOG_ERR, "rkdb: Error creating bridge: the ENOTCONN thing happened");
@@ -738,12 +751,15 @@ static void bridge__backoff_reset(struct mosquitto *context)
 
 static void bridge_check_pending(struct mosquitto *context)
 {
-	int err;
+	int err = 0;
 	socklen_t len;
 
+  // log__printf(NULL, MOSQ_LOG_NOTICE, "rkdb: bridge_check_pending context->state = %d", context->state);
 	if(context->state == mosq_cs_connect_pending){
 		len = sizeof(int);
-		if(!getsockopt(context->sock, SOL_SOCKET, SO_ERROR, (char *)&err, &len)){
+    log__printf(NULL, MOSQ_LOG_ERR, "rkdb: bridge_check_pending: calling getsockopt on %d", context->sock);
+    int rc = getsockopt(context->sock, SOL_SOCKET, SO_ERROR, (char *)&err, &len);
+		if(!rc){
 			if(err == 0){
 				mosquitto__set_state(context, mosq_cs_new);
 #if defined(WITH_ADNS) && defined(WITH_BRIDGE)
@@ -752,10 +768,12 @@ static void bridge_check_pending(struct mosquitto *context)
 				}
 #endif
 			}else if(err == ECONNREFUSED){
+        log__printf(NULL, MOSQ_LOG_NOTICE, "rkdb: getsockopt returned err %d", err);
 				do_disconnect(context, MOSQ_ERR_CONN_LOST);
 				return;
 			}
 		}else{
+      log__printf(NULL, MOSQ_LOG_NOTICE, "rkdb: [1;33mgetsockopt(%d) returned rc=%d: err %d[0m", context->sock, rc, errno);
 			do_disconnect(context, MOSQ_ERR_CONN_LOST);
 			return;
 		}

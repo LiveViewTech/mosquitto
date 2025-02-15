@@ -105,6 +105,7 @@ int mosquitto__check_keepalive(struct mosquitto *mosq)
 		}else{
 #ifdef WITH_BROKER
 #  ifdef WITH_BRIDGE
+			log__printf(NULL, MOSQ_LOG_NOTICE, "rkdb: [1;33mmosquitto__check_keepalive closing socket %d for %s[0m", mosq->sock, mosq->id);
 			if(mosq->bridge){
 				context__send_will(mosq);
 			}

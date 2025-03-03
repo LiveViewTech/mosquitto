@@ -183,7 +183,6 @@ int bridge__connect_step1(struct mosquitto *context)
 
 	for(i=0; i<context->bridge->topic_count; i++){
 		if(context->bridge->topics[i].direction == bd_out || context->bridge->topics[i].direction == bd_both){
-			log__printf(NULL, MOSQ_LOG_DEBUG, "Bridge %s doing local SUBSCRIBE on topic %s", context->id, context->bridge->topics[i].local_topic);
 			if(context->bridge->topics[i].qos > context->max_qos){
 				qos = context->max_qos;
 			}else{
@@ -865,10 +864,17 @@ void bridge_check(void)
 									mux__add_out(context);
 								}
 							}else if(rc == MOSQ_ERR_CONN_PENDING){
+                log__printf(NULL, MOSQ_LOG_ERR, "rkdb: bridge__connect_step2 conn pending: %s", context->bridge->name);
 								mux__add_in(context);
 								mux__add_out(context);
-								context->bridge->restart_t = 0;
+
+                // give it a minute to establish a connection before allowing bridge_check() or mosquitto__check_keepalive() to give up on it
+                context->bridge->restart_t = db.now_s + 60;
+                context->keepalive = 60;
+                context->next_msg_out = db.now_s + 60;
+                context->last_msg_in = db.now_s;
 							}else{
+                log__printf(NULL, MOSQ_LOG_ERR, "rkdb: bridge__connect_step2 failed with rc %d: %s", rc, context->bridge->name);
 								context->bridge->cur_address++;
 								if(context->bridge->cur_address == context->bridge->address_count){
 									context->bridge->cur_address = 0;
@@ -877,6 +883,7 @@ void bridge_check(void)
 							}
 						}else{
 							/* Need to retry */
+              log__printf(NULL, MOSQ_LOG_ERR, "rkdb: retrying adns: %s", context->bridge->name);
 							if(context->adns->ar_result){
 								freeaddrinfo(context->adns->ar_result);
 							}
@@ -885,9 +892,10 @@ void bridge_check(void)
 							context->bridge->restart_t = 0;
 						}
 					}else{
-            log__printf(NULL, MOSQ_LOG_ERR, "rkdb: adns restart: %s", context->bridge->name);
+            log__printf(NULL, MOSQ_LOG_ERR, "rkdb: bridge restart: %s", context->bridge->name);
 						rc = bridge__connect_step1(context);
 						if(rc){
+              log__printf(NULL, MOSQ_LOG_ERR, "rkdb: bridge__connect_step1 failed with rc %d: %s", rc, context->bridge->name);
 							context->bridge->cur_address++;
 							if(context->bridge->cur_address == context->bridge->address_count){
 								context->bridge->cur_address = 0;

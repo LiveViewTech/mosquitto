@@ -96,6 +96,8 @@ int bridge__new(struct mosquitto__bridge *bridge)
 	}
 	new_context->bridge = bridge;
 	new_context->is_bridge = true;
+	log__printf(new_context, MOSQ_LOG_INFO, "rkdb: bridge_new: setting %s keepalive to %d", new_context->id, new_context->bridge->keepalive);
+	new_context->keepalive = bridge->keepalive;
 
 	new_context->username = new_context->bridge->remote_username;
 	new_context->password = new_context->bridge->remote_password;
@@ -163,6 +165,7 @@ int bridge__connect_step1(struct mosquitto *context)
 	context->sock = INVALID_SOCKET;
 	context->last_msg_in = db.now_s;
 	context->next_msg_out = db.now_s + context->bridge->keepalive;
+	log__printf(context, MOSQ_LOG_INFO, "rkdb: step1: setting %s keepalive to %d", context->id, context->bridge->keepalive);
 	context->keepalive = context->bridge->keepalive;
 	context->clean_start = context->bridge->clean_start;
 	context->in_packet.payload = NULL;
@@ -333,7 +336,7 @@ int bridge__connect_step3(struct mosquitto *context)
 	session_expiry_interval.next = properties;
 	properties = &session_expiry_interval;
 
-	rc = send__connect(context, context->keepalive, context->clean_start, properties);
+	rc = send__connect(context, context->bridge->keepalive, context->clean_start, properties);
 	if(rc == MOSQ_ERR_SUCCESS){
 		return MOSQ_ERR_SUCCESS;
 	}else if(rc == MOSQ_ERR_ERRNO && errno == ENOTCONN){
@@ -868,10 +871,12 @@ void bridge_check(void)
 								mux__add_in(context);
 								mux__add_out(context);
 
-                // give it a minute to establish a connection before allowing bridge_check() or mosquitto__check_keepalive() to give up on it
-                context->bridge->restart_t = db.now_s + 60;
-                context->keepalive = 60;
-                context->next_msg_out = db.now_s + 60;
+                // give it a bit to establish a connection before allowing bridge_check() or mosquitto__check_keepalive() to give up on it
+                static int bridge_connect_allowance_time = 20;
+                log__printf(context, MOSQ_LOG_INFO, "rkdb: bridge_check: setting %s keepalive to %d temporarily", context->id, bridge_connect_allowance_time);
+                context->bridge->restart_t = db.now_s + bridge_connect_allowance_time;
+                context->keepalive = bridge_connect_allowance_time;
+                context->next_msg_out = db.now_s + bridge_connect_allowance_time;
                 context->last_msg_in = db.now_s;
 							}else{
                 log__printf(NULL, MOSQ_LOG_ERR, "rkdb: bridge__connect_step2 failed with rc %d: %s", rc, context->bridge->name);

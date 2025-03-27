@@ -201,6 +201,7 @@ int send__connect(struct mosquitto *mosq, uint16_t keepalive, bool clean_session
 		packet__write_string(packet, password, (uint16_t)strlen(password));
 	}
 
+	log__printf(mosq, MOSQ_LOG_INFO, "rkdb: send_connect: setting %s keepalive to %d", mosq->id, keepalive);
 	mosq->keepalive = keepalive;
 #ifdef WITH_BROKER
 # ifdef WITH_BRIDGE

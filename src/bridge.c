@@ -872,7 +872,7 @@ void bridge_check(void)
 								mux__add_out(context);
 
                 // give it a bit to establish a connection before allowing bridge_check() or mosquitto__check_keepalive() to give up on it
-                static int bridge_connect_allowance_time = 20;
+                static int bridge_connect_allowance_time = 30;
                 log__printf(context, MOSQ_LOG_INFO, "rkdb: bridge_check: setting %s keepalive to %d temporarily", context->id, bridge_connect_allowance_time);
                 context->bridge->restart_t = db.now_s + bridge_connect_allowance_time;
                 context->keepalive = bridge_connect_allowance_time;

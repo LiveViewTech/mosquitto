@@ -149,6 +149,30 @@ int bridge__new(struct mosquitto__bridge *bridge)
 #endif
 }
 
+static int MIN_RECONNECT_WAIT_TIME = 10;
+static int MAX_RECONNECT_WAIT_TIME = 105;
+static int RESET_BACKOFF_TIME = 600;
+static float reconnect_backoff_exponent = 1.5;
+static float reconnect_wait_time_jitter_max_s = 30;
+static time_t last_reconnect_attempt_s = 0;
+static int next_reconnect_wait_time_s = 0;
+
+int calc_next_reconnect_wait_time() {
+	int next_wait_time;
+	int backoff_jitter;
+
+	if (db.now_s - last_reconnect_attempt_s >= RESET_BACKOFF_TIME) {
+		next_wait_time = MIN_RECONNECT_WAIT_TIME;
+	} else {
+		next_wait_time = (int)(next_reconnect_wait_time_s * reconnect_backoff_exponent);
+		next_wait_time = next_wait_time < MAX_RECONNECT_WAIT_TIME ? next_wait_time : MAX_RECONNECT_WAIT_TIME;
+	}
+	backoff_jitter = (int)( ((float)rand() / (float)RAND_MAX) * reconnect_wait_time_jitter_max_s ) + 1;
+	next_wait_time += backoff_jitter;
+	log__printf(NULL, MOSQ_LOG_INFO, "rkdb: next reconn wait time set to : %d", next_wait_time);
+	return next_wait_time;
+}
+
 #if defined(__GLIBC__) && defined(WITH_ADNS)
 int bridge__connect_step1(struct mosquitto *context)
 {
@@ -161,12 +185,27 @@ int bridge__connect_step1(struct mosquitto *context)
 
 	if(!context || !context->bridge) return MOSQ_ERR_INVAL;
 
+	if (db.now_s - last_reconnect_attempt_s < next_reconnect_wait_time_s) {
+		return MOSQ_ERR_SUCCESS;
+	}
+
+	next_reconnect_wait_time_s = calc_next_reconnect_wait_time();
+	last_reconnect_attempt_s = db.now_s;
+	log__printf(NULL, MOSQ_LOG_WARNING, "rkdb: bridge restart: %s", context->bridge->name);
+
 	mosquitto__set_state(context, mosq_cs_new);
 	context->sock = INVALID_SOCKET;
 	context->last_msg_in = db.now_s;
-	context->next_msg_out = db.now_s + context->bridge->keepalive;
-	log__printf(context, MOSQ_LOG_INFO, "rkdb: step1: setting %s keepalive to %d", context->id, context->bridge->keepalive);
-	context->keepalive = context->bridge->keepalive;
+
+	// give it a bit to establish a connection before allowing bridge_check() or mosquitto__check_keepalive() to give up on it
+	// context->next_msg_out = db.now_s + context->bridge->keepalive;
+	// context->keepalive = context->bridge->keepalive;
+	static int bridge_connect_allowance_time = 60;
+	log__printf(context, MOSQ_LOG_INFO, "rkdb: bridge_check: setting %s keepalive and restart_t to %d during startup", context->id, bridge_connect_allowance_time);
+	context->next_msg_out = db.now_s + bridge_connect_allowance_time;
+	context->keepalive = bridge_connect_allowance_time;
+	context->bridge->restart_t = db.now_s + context->bridge->restart_timeout;
+
 	context->clean_start = context->bridge->clean_start;
 	context->in_packet.payload = NULL;
 	context->ping_t = 0;
@@ -253,7 +292,7 @@ int bridge__connect_step1(struct mosquitto *context)
 		if(rc == MOSQ_ERR_TLS){
 			mux__delete(context);
 			net__socket_close(context);
-      log__printf(NULL, MOSQ_LOG_ERR, "rkdb: Error creating bridge: TLS error - cp1: %s.", strerror(errno));
+			log__printf(NULL, MOSQ_LOG_ERR, "rkdb: Error creating bridge: TLS error - cp1: %s.", strerror(errno));
 			return rc; /* Error already printed */
 		}else if(rc == MOSQ_ERR_ERRNO){
 			log__printf(NULL, MOSQ_LOG_ERR, "rkdb: Error creating bridge: %s.", strerror(errno));
@@ -280,7 +319,7 @@ int bridge__connect_step2(struct mosquitto *context)
 		if(rc == MOSQ_ERR_TLS){
 			mux__delete(context);
 			net__socket_close(context);
-      log__printf(NULL, MOSQ_LOG_ERR, "rkdb: Error creating bridge: TLS error - cp2: %s.", strerror(errno));
+			log__printf(NULL, MOSQ_LOG_ERR, "rkdb: Error creating bridge: TLS error - cp2: %s.", strerror(errno));
 			return rc; /* Error already printed */
 		}else if(rc == MOSQ_ERR_ERRNO){
 			log__printf(NULL, MOSQ_LOG_ERR, "rkdb: Error creating bridge: %s.", strerror(errno));
@@ -312,7 +351,7 @@ int bridge__connect_step3(struct mosquitto *context)
 	rc = net__socket_connect_step3(context, context->bridge->addresses[context->bridge->cur_address].address);
 	if(rc > 0){
 		if(rc == MOSQ_ERR_TLS){
-      log__printf(NULL, MOSQ_LOG_ERR, "rkdb: Error creating bridge: TLS error - cp3: %s.", strerror(errno));
+			log__printf(NULL, MOSQ_LOG_ERR, "rkdb: Error creating bridge: TLS error - cp3: %s.", strerror(errno));
 			mux__delete(context);
 			net__socket_close(context);
 			return rc; /* Error already printed */
@@ -340,11 +379,11 @@ int bridge__connect_step3(struct mosquitto *context)
 	if(rc == MOSQ_ERR_SUCCESS){
 		return MOSQ_ERR_SUCCESS;
 	}else if(rc == MOSQ_ERR_ERRNO && errno == ENOTCONN){
-    log__printf(NULL, MOSQ_LOG_ERR, "rkdb: Error creating bridge: the ENOTCONN thing happened");
+		log__printf(NULL, MOSQ_LOG_ERR, "rkdb: Error creating bridge: the ENOTCONN thing happened");
 		return MOSQ_ERR_SUCCESS;
 	}else{
 		if(rc == MOSQ_ERR_TLS){
-      log__printf(NULL, MOSQ_LOG_ERR, "rkdb: Error creating bridge: TLS error - cp4: %s.", strerror(errno));
+			log__printf(NULL, MOSQ_LOG_ERR, "rkdb: Error creating bridge: TLS error - cp4: %s.", strerror(errno));
 			return rc; /* Error already printed */
 		}else if(rc == MOSQ_ERR_ERRNO){
 			log__printf(NULL, MOSQ_LOG_ERR, "rkdb: Error creating bridge: %s.", strerror(errno));
@@ -367,8 +406,8 @@ int bridge__connect(struct mosquitto *context)
 	uint8_t notification_payload;
 	uint8_t qos;
 
-    mosquitto_property session_expiry_interval;
-    mosquitto_property *properties = NULL;
+		mosquitto_property session_expiry_interval;
+		mosquitto_property *properties = NULL;
 
 	if(!context || !context->bridge) return MOSQ_ERR_INVAL;
 
@@ -384,7 +423,7 @@ int bridge__connect(struct mosquitto *context)
 	context->ping_t = 0;
 	context->bridge->lazy_reconnect = false;
 	context->maximum_packet_size = context->bridge->maximum_packet_size;
-    context->session_expiry_interval = context->bridge->session_expiry;
+		context->session_expiry_interval = context->bridge->session_expiry;
 	bridge__packet_cleanup(context);
 	db__message_reconnect_reset(context);
 
@@ -481,32 +520,32 @@ int bridge__connect(struct mosquitto *context)
 
 		return rc;
 	}else if(rc == MOSQ_ERR_CONN_PENDING){
-    log__printf(NULL, MOSQ_LOG_NOTICE, "rkdb: Connecting bridge - connection pending %s (%s:%d)", context->bridge->name, context->bridge->addresses[context->bridge->cur_address].address, context->bridge->addresses[context->bridge->cur_address].port);
+		log__printf(NULL, MOSQ_LOG_NOTICE, "rkdb: Connecting bridge - connection pending %s (%s:%d)", context->bridge->name, context->bridge->addresses[context->bridge->cur_address].address, context->bridge->addresses[context->bridge->cur_address].port);
 		mosquitto__set_state(context, mosq_cs_connect_pending);
 		mux__add_out(context);
 	} else {
-    log__printf(NULL, MOSQ_LOG_NOTICE, "rkdb: Connecting bridge - connection established %s (%s:%d)", context->bridge->name, context->bridge->addresses[context->bridge->cur_address].address, context->bridge->addresses[context->bridge->cur_address].port);
+		log__printf(NULL, MOSQ_LOG_NOTICE, "rkdb: Connecting bridge - connection established %s (%s:%d)", context->bridge->name, context->bridge->addresses[context->bridge->cur_address].address, context->bridge->addresses[context->bridge->cur_address].port);
 	}
 
 	HASH_ADD(hh_sock, db.contexts_by_sock, sock, sizeof(context->sock), context);
 
-    // Set session expiry interval for bridge
-    session_expiry_interval.value.i32 = context->session_expiry_interval;
-    session_expiry_interval.identifier = MQTT_PROP_SESSION_EXPIRY_INTERVAL;
-    session_expiry_interval.client_generated = false;
-    session_expiry_interval.next = properties;
-    properties = &session_expiry_interval;
+		// Set session expiry interval for bridge
+		session_expiry_interval.value.i32 = context->session_expiry_interval;
+		session_expiry_interval.identifier = MQTT_PROP_SESSION_EXPIRY_INTERVAL;
+		session_expiry_interval.client_generated = false;
+		session_expiry_interval.next = properties;
+		properties = &session_expiry_interval;
 
-    rc2 = send__connect(context, context->keepalive, context->clean_start, properties);
+		rc2 = send__connect(context, context->keepalive, context->clean_start, properties);
 	if(rc2 == MOSQ_ERR_SUCCESS){
-    log__printf(NULL, MOSQ_LOG_NOTICE, "rkdb: Connecting bridge - send__connect() succeeded %s (%s:%d)", context->bridge->name, context->bridge->addresses[context->bridge->cur_address].address, context->bridge->addresses[context->bridge->cur_address].port);
+		log__printf(NULL, MOSQ_LOG_NOTICE, "rkdb: Connecting bridge - send__connect() succeeded %s (%s:%d)", context->bridge->name, context->bridge->addresses[context->bridge->cur_address].address, context->bridge->addresses[context->bridge->cur_address].port);
 		return rc;
 	}else if(rc2 == MOSQ_ERR_ERRNO && errno == ENOTCONN){
-    log__printf(NULL, MOSQ_LOG_WARNING, "rkdb: Connecting bridge - send__connect() ENOTCONN %s (%s:%d)", context->bridge->name, context->bridge->addresses[context->bridge->cur_address].address, context->bridge->addresses[context->bridge->cur_address].port);
+		log__printf(NULL, MOSQ_LOG_WARNING, "rkdb: Connecting bridge - send__connect() ENOTCONN %s (%s:%d)", context->bridge->name, context->bridge->addresses[context->bridge->cur_address].address, context->bridge->addresses[context->bridge->cur_address].port);
 		return MOSQ_ERR_SUCCESS;
 	}else{
 		if(rc2 == MOSQ_ERR_TLS){
-      log__printf(NULL, MOSQ_LOG_ERR, "rkdb: Error creating bridge: TLS error - cp6: %s.", strerror(errno));
+			log__printf(NULL, MOSQ_LOG_ERR, "rkdb: Error creating bridge: TLS error - cp6: %s.", strerror(errno));
 			return rc2; /* Error already printed */
 		}else if(rc2 == MOSQ_ERR_ERRNO){
 			log__printf(NULL, MOSQ_LOG_ERR, "rkdb: Error creating bridge: %s.", strerror(errno));
@@ -795,7 +834,7 @@ void bridge_check(void)
 					&& context->bridge->primary_retry
 					&& db.now_s > context->bridge->primary_retry){
 
-        log__printf(NULL, MOSQ_LOG_NOTICE, "rkdb: primary retry defined - some chicanery going on.");
+				log__printf(NULL, MOSQ_LOG_NOTICE, "rkdb: primary retry defined - some chicanery going on.");
 
 				if(context->bridge->primary_retry_sock == INVALID_SOCKET){
 					rc = net__try_connect(context->bridge->addresses[0].address,
@@ -839,11 +878,11 @@ void bridge_check(void)
 
 		if(context->sock == INVALID_SOCKET){
 			/* Want to try to restart the bridge connection */
-      if (checkCount % 100 == 0) {
-        log__printf(NULL, MOSQ_LOG_ERR, "rkdb: connection is down - checking if I should try to restart: %s", context->bridge->name);
-      }
+			if (checkCount % 100 == 0) {
+				log__printf(NULL, MOSQ_LOG_ERR, "rkdb: connection is down - checking if I should try to restart: %s", context->bridge->name);
+			}
 			if(!context->bridge->restart_t){
-        log__printf(NULL, MOSQ_LOG_ERR, "rkdb: setting restart time to %d seconds from now", context->bridge->restart_timeout);
+				log__printf(NULL, MOSQ_LOG_ERR, "rkdb: setting context->bridge->restart_t to %d seconds from now", context->bridge->restart_timeout);
 				context->bridge->restart_t = db.now_s+context->bridge->restart_timeout;
 				context->bridge->cur_address++;
 				if(context->bridge->cur_address == context->bridge->address_count){
@@ -867,19 +906,11 @@ void bridge_check(void)
 									mux__add_out(context);
 								}
 							}else if(rc == MOSQ_ERR_CONN_PENDING){
-                log__printf(NULL, MOSQ_LOG_ERR, "rkdb: bridge__connect_step2 conn pending: %s", context->bridge->name);
+								log__printf(NULL, MOSQ_LOG_ERR, "rkdb: bridge__connect_step2 conn pending: %s", context->bridge->name);
 								mux__add_in(context);
 								mux__add_out(context);
-
-                // give it a bit to establish a connection before allowing bridge_check() or mosquitto__check_keepalive() to give up on it
-                static int bridge_connect_allowance_time = 20;
-                log__printf(context, MOSQ_LOG_INFO, "rkdb: bridge_check: setting %s keepalive to %d temporarily", context->id, bridge_connect_allowance_time);
-                context->bridge->restart_t = db.now_s + bridge_connect_allowance_time;
-                context->keepalive = bridge_connect_allowance_time;
-                context->next_msg_out = db.now_s + bridge_connect_allowance_time;
-                context->last_msg_in = db.now_s;
 							}else{
-                log__printf(NULL, MOSQ_LOG_ERR, "rkdb: bridge__connect_step2 failed with rc %d: %s", rc, context->bridge->name);
+								log__printf(NULL, MOSQ_LOG_ERR, "rkdb: bridge__connect_step2 failed with rc %d: %s", rc, context->bridge->name);
 								context->bridge->cur_address++;
 								if(context->bridge->cur_address == context->bridge->address_count){
 									context->bridge->cur_address = 0;
@@ -888,7 +919,7 @@ void bridge_check(void)
 							}
 						}else{
 							/* Need to retry */
-              log__printf(NULL, MOSQ_LOG_ERR, "rkdb: retrying adns: %s", context->bridge->name);
+							log__printf(NULL, MOSQ_LOG_ERR, "rkdb: retrying adns: %s", context->bridge->name);
 							if(context->adns->ar_result){
 								freeaddrinfo(context->adns->ar_result);
 							}
@@ -897,10 +928,9 @@ void bridge_check(void)
 							context->bridge->restart_t = 0;
 						}
 					}else{
-            log__printf(NULL, MOSQ_LOG_ERR, "rkdb: bridge restart: %s", context->bridge->name);
 						rc = bridge__connect_step1(context);
 						if(rc){
-              log__printf(NULL, MOSQ_LOG_ERR, "rkdb: bridge__connect_step1 failed with rc %d: %s", rc, context->bridge->name);
+							log__printf(NULL, MOSQ_LOG_ERR, "rkdb: bridge__connect_step1 failed with rc %d: %s", rc, context->bridge->name);
 							context->bridge->cur_address++;
 							if(context->bridge->cur_address == context->bridge->address_count){
 								context->bridge->cur_address = 0;
@@ -912,9 +942,9 @@ void bridge_check(void)
 					}
 #else
 					{
-            if (checkCount % 100 == 0) {
-              log__printf(NULL, MOSQ_LOG_ERR, "rkdb: NON-adns restart: %s", context->bridge->name);
-            }
+						if (checkCount % 100 == 0) {
+							log__printf(NULL, MOSQ_LOG_ERR, "rkdb: NON-adns restart: %s", context->bridge->name);
+						}
 						rc = bridge__connect(context);
 						context->bridge->restart_t = 0;
 						if(rc == MOSQ_ERR_SUCCESS || rc == MOSQ_ERR_CONN_PENDING){
@@ -940,3 +970,5 @@ void bridge_check(void)
 }
 
 #endif
+
+// vim: noexpandtab

@@ -104,3 +104,6 @@ obj-*/
 
 # Others
 tmp/
+compile_commands.json
+.cache/
+compile_flags.txt

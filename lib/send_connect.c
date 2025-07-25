@@ -201,8 +201,8 @@ int send__connect(struct mosquitto *mosq, uint16_t keepalive, bool clean_session
 		packet__write_string(packet, password, (uint16_t)strlen(password));
 	}
 
-	log__printf(mosq, MOSQ_LOG_INFO, "rkdb: send_connect: setting %s keepalive to %d", mosq->id, keepalive);
-	mosq->keepalive = keepalive;
+	// TODO - I think it's it too early to reset keepalive - may need to revisit?
+	// mosq->keepalive = keepalive;
 #ifdef WITH_BROKER
 # ifdef WITH_BRIDGE
 	log__printf(mosq, MOSQ_LOG_DEBUG, "Bridge %s sending CONNECT", SAFE_PRINT(clientid));

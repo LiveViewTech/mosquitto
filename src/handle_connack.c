@@ -49,10 +49,17 @@ int handle__connack(struct mosquitto *context)
 	if(context->in_packet.command != CMD_CONNACK){
 		return MOSQ_ERR_MALFORMED_PACKET;
 	}
-	log__printf(NULL, MOSQ_LOG_DEBUG, "Received CONNACK on connection %s.", context->id);
-	if(packet__read_byte(&context->in_packet, &connect_acknowledge)) return MOSQ_ERR_MALFORMED_PACKET;
-	if(packet__read_byte(&context->in_packet, &reason_code)) return MOSQ_ERR_MALFORMED_PACKET;
+	log__printf(NULL, MOSQ_LOG_INFO, "Received CONNACK on connection %s.", context->id);
+	if(packet__read_byte(&context->in_packet, &connect_acknowledge)) {
+		log__printf(NULL, MOSQ_LOG_ERR, "CONNACK malformed packet");
+		return MOSQ_ERR_MALFORMED_PACKET;
+	}
+	if(packet__read_byte(&context->in_packet, &reason_code)) {
+		log__printf(NULL, MOSQ_LOG_ERR, "CONNACK malformed packet");
+		return MOSQ_ERR_MALFORMED_PACKET;
+	}
 
+	log__printf(NULL, MOSQ_LOG_INFO, "CONNACK reason=%d (0 is good)", reason_code);
 	if(context->protocol == mosq_p_mqtt5){
 		if(context->in_packet.remaining_length == 2 && reason_code == CONNACK_REFUSED_PROTOCOL_VERSION){
 			/* We have connected to a MQTT v3.x broker that doesn't support MQTT v5.0

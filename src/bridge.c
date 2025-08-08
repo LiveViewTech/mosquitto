@@ -151,25 +151,32 @@ int bridge__new(struct mosquitto__bridge *bridge)
 static int MIN_RECONNECT_WAIT_TIME_SECS = 10;
 static int MAX_RECONNECT_WAIT_TIME_SECS = 105;
 static int RESET_BACKOFF_TIME_SECS = 600;
-static float reconnect_backoff_exponent = 1.5;
-static float reconnect_wait_time_jitter_max_s = 30;
-static time_t last_reconnect_attempt_s = 0;
-static int next_reconnect_wait_time_s = 0;
+static float RECONNECT_BACKOFF_EXPONENT = 1.5;
+static float JITTER_MAX_SECS = 30;
+static time_t last_reconnect_attempt_time_s = 0;
+static int increasing_wait_time_s = 0;
 
-int calc_next_reconnect_wait_time() {
+int is_it_time_to_attempt_reconnect() {
 	int next_wait_time;
 	int backoff_jitter;
 
-	if (db.now_s - last_reconnect_attempt_s >= RESET_BACKOFF_TIME_SECS) {
+	if (db.now_s - last_reconnect_attempt_time_s < increasing_wait_time_s) {
+		return false;
+	}
+
+	if (db.now_s - last_reconnect_attempt_time_s >= RESET_BACKOFF_TIME_SECS) {
 		next_wait_time = MIN_RECONNECT_WAIT_TIME_SECS;
 	} else {
-		next_wait_time = (int)(next_reconnect_wait_time_s * reconnect_backoff_exponent);
+		next_wait_time = (int)(increasing_wait_time_s * RECONNECT_BACKOFF_EXPONENT);
 		next_wait_time = next_wait_time < MAX_RECONNECT_WAIT_TIME_SECS ? next_wait_time : MAX_RECONNECT_WAIT_TIME_SECS;
 	}
-	backoff_jitter = (int)( ((float)rand() / (float)RAND_MAX) * reconnect_wait_time_jitter_max_s ) + 1;
+	backoff_jitter = (int)( ((float)rand() / (float)RAND_MAX) * JITTER_MAX_SECS ) + 1;
 	next_wait_time += backoff_jitter;
 	log__printf(NULL, MOSQ_LOG_INFO, "rkdb: next reconnect wait time set to %d (for if current effort fails)", next_wait_time);
-	return next_wait_time;
+
+	increasing_wait_time_s = next_wait_time;
+	last_reconnect_attempt_time_s = db.now_s;
+	return true;
 }
 
 #if defined(__GLIBC__) && defined(WITH_ADNS)
@@ -184,13 +191,9 @@ int bridge__connect_step1(struct mosquitto *context)
 
 	if(!context || !context->bridge) return MOSQ_ERR_INVAL;
 
-	if (db.now_s - last_reconnect_attempt_s < next_reconnect_wait_time_s) {
+	if (!is_it_time_to_attempt_reconnect()) {
 		return MOSQ_ERR_SUCCESS;
 	}
-
-	log__printf(NULL, MOSQ_LOG_NOTICE, "rkdb: Connecting bridge (step 1) %s (%s:%d)", context->id, context->bridge->addresses[context->bridge->cur_address].address, context->bridge->addresses[context->bridge->cur_address].port);
-	next_reconnect_wait_time_s = calc_next_reconnect_wait_time();
-	last_reconnect_attempt_s = db.now_s;
 
 	mosquitto__set_state(context, mosq_cs_new);
 	context->sock = INVALID_SOCKET;

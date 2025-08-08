@@ -148,28 +148,65 @@ int bridge__new(struct mosquitto__bridge *bridge)
 #endif
 }
 
-static int MIN_RECONNECT_WAIT_TIME_SECS = 10;
-static int MAX_RECONNECT_WAIT_TIME_SECS = 105;
+static int START_BACKOFF_WAIT_TIME_SECS = 30;
+static int MAX_RECONNECT_WAIT_TIME_SECS = 120;
 static int RESET_BACKOFF_TIME_SECS = 600;
-static float reconnect_backoff_exponent = 1.5;
-static float reconnect_wait_time_jitter_max_s = 30;
-static time_t last_reconnect_attempt_s = 0;
-static int next_reconnect_wait_time_s = 0;
+static int MAX_JITTER_SECS = 30;
+static float RECONNECT_BACKOFF_EXPONENT = 2.0;
 
-int calc_next_reconnect_wait_time() {
-	int next_wait_time;
-	int backoff_jitter;
+static int increasing_wait_time_s = 0;
+static time_t last_connect_attempt_time_s = 0;
+static time_t target_reconnect_time_s = 0;
 
-	if (db.now_s - last_reconnect_attempt_s >= RESET_BACKOFF_TIME_SECS) {
-		next_wait_time = MIN_RECONNECT_WAIT_TIME_SECS;
-	} else {
-		next_wait_time = (int)(next_reconnect_wait_time_s * reconnect_backoff_exponent);
-		next_wait_time = next_wait_time < MAX_RECONNECT_WAIT_TIME_SECS ? next_wait_time : MAX_RECONNECT_WAIT_TIME_SECS;
+static int rand_between(int low, int high)
+{
+	int r;
+	util__random_bytes(&r, sizeof(int));
+	return (abs(r) % (high - low)) + low;
+}
+
+static int min(int a, int b) {
+	return (a <= b) ? a : b;
+}
+
+static int max(int a, int b) {
+	return (a < b) ? b : a;
+}
+
+int is_it_time_to_retry_connect() {
+	int jitter;
+
+	if (target_reconnect_time_s == 0) {
+		// determine how long to wait to reconnect
+		if (db.now_s - last_connect_attempt_time_s >= RESET_BACKOFF_TIME_SECS) {
+			log__printf(NULL, MOSQ_LOG_INFO, "rkdb: resetting reconnect wait time");
+			increasing_wait_time_s = 0;
+		} else if (increasing_wait_time_s == 0) {
+			increasing_wait_time_s = START_BACKOFF_WAIT_TIME_SECS;
+		} else if (increasing_wait_time_s < MAX_RECONNECT_WAIT_TIME_SECS) {
+			increasing_wait_time_s = (int)(increasing_wait_time_s * RECONNECT_BACKOFF_EXPONENT);
+			increasing_wait_time_s = min(increasing_wait_time_s, MAX_RECONNECT_WAIT_TIME_SECS);
+		}
+
+		jitter = rand_between(0, MAX_JITTER_SECS);
+		if (last_connect_attempt_time_s == 0) {
+			// mosquitto just started - connect right away
+			target_reconnect_time_s = db.now_s;
+		} else {
+			target_reconnect_time_s = max(last_connect_attempt_time_s + increasing_wait_time_s, db.now_s) + jitter;
+			log__printf(NULL, MOSQ_LOG_INFO, "rkdb: reconnect needed: backoff_wait_time_s=%ds, since-last=%ld, jitter=%ds, time-left=%lds",
+				    increasing_wait_time_s, db.now_s - last_connect_attempt_time_s, jitter, target_reconnect_time_s - db.now_s);
+		}
+		return false;
+
+	} else if (db.now_s < target_reconnect_time_s) {
+		return false;
 	}
-	backoff_jitter = (int)( ((float)rand() / (float)RAND_MAX) * reconnect_wait_time_jitter_max_s ) + 1;
-	next_wait_time += backoff_jitter;
-	log__printf(NULL, MOSQ_LOG_INFO, "rkdb: next reconnect wait time set to %d (for if current effort fails)", next_wait_time);
-	return next_wait_time;
+
+	// reconnect time has been reached
+	target_reconnect_time_s = 0;
+	last_connect_attempt_time_s = db.now_s;
+	return true;
 }
 
 #if defined(__GLIBC__) && defined(WITH_ADNS)
@@ -184,13 +221,12 @@ int bridge__connect_step1(struct mosquitto *context)
 
 	if(!context || !context->bridge) return MOSQ_ERR_INVAL;
 
-	if (db.now_s - last_reconnect_attempt_s < next_reconnect_wait_time_s) {
+	if (!is_it_time_to_retry_connect()) {
 		return MOSQ_ERR_SUCCESS;
 	}
 
+	log__printf(NULL, MOSQ_LOG_NOTICE, "rkdb: reconnect attempt starting: %s", context->id);
 	log__printf(NULL, MOSQ_LOG_NOTICE, "rkdb: Connecting bridge (step 1) %s (%s:%d)", context->id, context->bridge->addresses[context->bridge->cur_address].address, context->bridge->addresses[context->bridge->cur_address].port);
-	next_reconnect_wait_time_s = calc_next_reconnect_wait_time();
-	last_reconnect_attempt_s = db.now_s;
 
 	mosquitto__set_state(context, mosq_cs_new);
 	context->sock = INVALID_SOCKET;
@@ -737,13 +773,6 @@ void bridge__packet_cleanup(struct mosquitto *context)
 	context->out_packet_count = 0;
 
 	packet__cleanup(&(context->in_packet));
-}
-
-static int rand_between(int low, int high)
-{
-	int r;
-	util__random_bytes(&r, sizeof(int));
-	return (abs(r) % (high - low)) + low;
 }
 
 static void bridge__backoff_step(struct mosquitto *context)

@@ -194,7 +194,7 @@ int is_it_time_to_retry_connect() {
 			target_reconnect_time_s = db.now_s;
 		} else {
 			target_reconnect_time_s = max(last_connect_attempt_time_s + increasing_wait_time_s, db.now_s) + jitter;
-			log__printf(NULL, MOSQ_LOG_INFO, "rkdb: reconnect needed: backoff_wait_time_s=%ds, since-last=%ld, jitter=%ds, time-left=%lds",
+			log__printf(NULL, MOSQ_LOG_INFO, "rkdb: reconnect needed: backoff_wait_time_s=%ds, since-last=%lds, jitter=%ds, time-left=%lds",
 				    increasing_wait_time_s, db.now_s - last_connect_attempt_time_s, jitter, target_reconnect_time_s - db.now_s);
 		}
 		return false;

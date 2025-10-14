@@ -205,7 +205,7 @@ int send__connect(struct mosquitto *mosq, uint16_t keepalive, bool clean_session
 	// mosq->keepalive = keepalive;
 #ifdef WITH_BROKER
 # ifdef WITH_BRIDGE
-	log__printf(mosq, MOSQ_LOG_DEBUG, "Bridge %s sending CONNECT", SAFE_PRINT(clientid));
+	log__printf(mosq, MOSQ_LOG_INFO, "rkdb: Sending CONNECT for bridge %s", SAFE_PRINT(clientid));
 # endif
 #else
 	log__printf(mosq, MOSQ_LOG_DEBUG, "Client %s sending CONNECT", SAFE_PRINT(clientid));

@@ -46,7 +46,9 @@ int send__pingreq(struct mosquitto *mosq)
 	int rc;
 	assert(mosq);
 #ifdef WITH_BROKER
-	log__printf(NULL, MOSQ_LOG_DEBUG, "Sending PINGREQ to %s", SAFE_PRINT(mosq->id));
+  if (mosq->is_bridge) {
+    log__printf(NULL, MOSQ_LOG_INFO, "Sending PINGREQ to %s", SAFE_PRINT(mosq->id));
+  }
 #else
 	log__printf(mosq, MOSQ_LOG_DEBUG, "Client %s sending PINGREQ", SAFE_PRINT(mosq->id));
 #endif

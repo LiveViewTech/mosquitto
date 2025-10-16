@@ -311,6 +311,8 @@ static int persist__retain_save_all(FILE *db_fptr)
 	return MOSQ_ERR_SUCCESS;
 }
 
+static long write_count = 0;
+
 int persist__backup(bool shutdown)
 {
 	int rc = 0;
@@ -326,7 +328,9 @@ int persist__backup(bool shutdown)
 	if(db.config->persistence == false) return MOSQ_ERR_SUCCESS;
 	if(db.config->persistence_filepath == NULL) return MOSQ_ERR_INVAL;
 
-	log__printf(NULL, MOSQ_LOG_INFO, "Saving in-memory database to %s.", db.config->persistence_filepath);
+  if (write_count++ % 1000 == 0) {
+    log__printf(NULL, MOSQ_LOG_INFO, "Saving in-memory database to %s.", db.config->persistence_filepath);
+  }
 
 	len = strlen(db.config->persistence_filepath)+5;
 	outfile = mosquitto__malloc(len+1);

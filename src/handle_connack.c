@@ -49,7 +49,7 @@ int handle__connack(struct mosquitto *context)
 	if(context->in_packet.command != CMD_CONNACK){
 		return MOSQ_ERR_MALFORMED_PACKET;
 	}
-	log__printf(NULL, MOSQ_LOG_INFO, "Received CONNACK on connection %s.", context->id);
+	log__printf(NULL, MOSQ_LOG_INFO, "rkdb: Received CONNACK on connection %s.", context->id);
 	if(packet__read_byte(&context->in_packet, &connect_acknowledge)) {
 		log__printf(NULL, MOSQ_LOG_ERR, "CONNACK malformed packet");
 		return MOSQ_ERR_MALFORMED_PACKET;

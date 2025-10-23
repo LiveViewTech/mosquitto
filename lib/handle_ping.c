@@ -56,6 +56,8 @@ int handle__pingreq(struct mosquitto *mosq)
 	return send__pingresp(mosq);
 }
 
+static long ping_resp_count = 0;
+
 int handle__pingresp(struct mosquitto *mosq)
 {
 	assert(mosq);
@@ -69,7 +71,11 @@ int handle__pingresp(struct mosquitto *mosq)
 	if(mosq->bridge == NULL){
 		return MOSQ_ERR_PROTOCOL;
 	}
-	log__printf(NULL, MOSQ_LOG_INFO, "Received PINGRESP from %s", SAFE_PRINT(mosq->id));
+  if (ping_resp_count++ % 30 == 0) {
+    log__printf(NULL, MOSQ_LOG_INFO, "Received PINGRESP from %s", SAFE_PRINT(mosq->id));
+  } else {
+    log__printf(NULL, MOSQ_LOG_DEBUG, "Received PINGRESP from %s", SAFE_PRINT(mosq->id));
+  }
 #else
 	log__printf(mosq, MOSQ_LOG_DEBUG, "Client %s received PINGRESP", SAFE_PRINT(mosq->id));
 #endif
